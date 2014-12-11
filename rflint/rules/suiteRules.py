@@ -1,5 +1,7 @@
 from rflint.common import SuiteRule, ERROR, WARNING
 from rflint.parser import SettingTable
+import difflib
+import itertools
 import re
 
 def normalize_name(string):
@@ -79,3 +81,36 @@ class RequireSuiteDocumentation(SuiteRule):
 
         self.report(suite, "No suite documentation", linenum)
             
+class TestCasesTooSimilar(SuiteRule):
+    """Warn if test cases are too similar to each other"""
+    severity = WARNING
+    max_similarity = .9
+
+    def normalize(self, string):
+        return string.lower().strip().replace(' ', '')
+
+    def apply(self, suite):
+        similar_testcases = set()
+        testcases = [testcase for testcase in suite.testcases
+                     if not testcase.is_templated]
+        pairs = itertools.combinations(testcases, 2)
+        differ = difflib.SequenceMatcher()
+        for pair in pairs:
+            # set testcase b to be the first half of the combination because
+            # SequenceMatcher caches information about b
+            testcase_a = self.normalize(''.join([''.join(step) for step
+                                                 in pair[1].steps]))
+            testcase_b = self.normalize(''.join([''.join(step) for step
+                                                 in pair[0].steps]))
+            differ.set_seqs(a=testcase_a, b=testcase_b)
+            if (differ.real_quick_ratio() < self.max_similarity
+                    or differ.quick_ratio() < self.max_similarity
+                    or differ.ratio() < self.max_similarity):
+                continue
+            similar_testcases.add(pair[0])
+            similar_testcases.add(pair[1])
+        if similar_testcases:
+            similar_testcase_names = {testcase.name for testcase
+                                      in similar_testcases}
+            self.report(suite, "Similar testcases found: '%s'" % ', '.join(
+                similar_testcase_names), list(similar_testcases)[0].linenumber)
